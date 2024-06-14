@@ -1,20 +1,20 @@
 use std::borrow::Cow::{self, Borrowed};
-use std::io;
-use std::io::prelude::*;
-use std::net::ToSocketAddrs;
-use std::process::exit;
-use std::time::Duration;
+use std::{
+    io::{self, prelude::*},
+    net::ToSocketAddrs,
+    process::exit,
+    time::Duration,
+};
 
 use anyhow::Context;
 use atty::Stream::Stdin;
-use clap::builder::styling::{AnsiColor, Color::Ansi};
-use clap::builder::styling::{Style, Styles};
-use clap::Parser;
+use clap::{
+    builder::styling::{AnsiColor, Color::Ansi, Style, Styles},
+    Parser,
+};
 use dns_lookup::lookup_addr;
 use owo_colors::OwoColorize;
-use rustyline::config::Configurer;
-use rustyline::highlight::Highlighter;
-use rustyline::{Completer, Helper, Hinter, Validator};
+use rustyline::{config::Configurer, highlight::Highlighter, Completer, Helper, Hinter, Validator};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
@@ -190,7 +190,7 @@ async fn main() -> GenericResult {
     // Release mode needs special error handling to not print backtraces for minor errors.
     #[cfg(not(debug_assertions))]
     {
-        let res = crate::run(&args.hostname, args.port, args.command.as_ref()).await;
+        let res = crate::run(&args.host, args.port, args.command.as_ref()).await;
 
         if let Err(ref inner) = res {
             let error_strip: Regex = Regex::new(r"\s*\(os error \d+\)").unwrap();
