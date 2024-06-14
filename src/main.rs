@@ -33,7 +33,7 @@ struct Args {
     host: String,
 
     /// The port to use.
-    #[arg()]
+    #[arg(default_value = "9001")]
     port: u16,
 
     /// A command/query to run and immediately exit.
@@ -69,6 +69,11 @@ impl Highlighter for HighlightPrompt {
     }
 }
 
+/// Determine if a command string is a query or not.
+/// # Arguments
+/// * `command` - The command string to check.
+/// # Returns
+/// True if the string contains a query command at the beginning, false if not.
 fn is_query(command: &str) -> bool {
     if command.is_empty() {
         return false;
@@ -83,6 +88,8 @@ fn is_query(command: &str) -> bool {
         .ends_with("?");
 }
 
+/// Reads from the given [`TcpStream`] until a newline is hit and returns the response, if any.
+/// Has a 5 second timeout to prevent hanging.
 async fn read_until_terminator(connection: &mut TcpStream) -> anyhow::Result<String> {
     let mut buffer = String::new();
     let timeout_length = Duration::from_secs(5);
@@ -105,6 +112,7 @@ fn get_host(destination: &str) -> anyhow::Result<String> {
     return Ok(hostname);
 }
 
+/// Sends `command` to the supplied [`TcpStream`] and returns the query result, if any.
 async fn write_cmd(connection: &mut TcpStream, command: &str) -> anyhow::Result<Option<String>> {
     let is_query_cmd = is_query(command);
     let mut cmd_copy = command.to_owned();
