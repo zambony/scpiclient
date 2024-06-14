@@ -1,4 +1,4 @@
-use std::borrow::Cow::{self, Borrowed, Owned};
+use std::borrow::Cow::{self, Borrowed};
 use std::io;
 use std::io::prelude::*;
 use std::net::ToSocketAddrs;
@@ -21,23 +21,16 @@ use tokio::net::TcpStream;
 #[cfg(not(debug_assertions))]
 use regex::Regex;
 
-const HEADER_STYLE: Style = Style::new().bold().fg_color(Some(Ansi(AnsiColor::Green)));
-const PLACEHOLDER_STYLE: Style = Style::new().fg_color(Some(Ansi(AnsiColor::BrightCyan)));
-
-const STYLES: Styles = Styles::styled()
-    .literal(AnsiColor::BrightCyan.on_default().bold())
-    .header(HEADER_STYLE)
-    .usage(HEADER_STYLE)
-    .placeholder(PLACEHOLDER_STYLE);
+type GenericResult = anyhow::Result<()>;
 
 /// A lightweight interactive SCPI client that handles basic commands and queries.
 /// Also accepts piped input or input redirected from a file (one command per line).
 #[derive(Parser, Debug)]
-#[command(version, about, verbatim_doc_comment, styles = STYLES, name = "scpiclient")]
+#[command(version, about, verbatim_doc_comment, styles = STYLES, name = "scpi")]
 struct Args {
-    /// The hostname to connect to.
+    /// The host to connect to.
     #[arg()]
-    hostname: String,
+    host: String,
 
     /// The port to use.
     #[arg()]
@@ -48,7 +41,14 @@ struct Args {
     command: Option<String>,
 }
 
-type GenericResult = anyhow::Result<()>;
+const HEADER_STYLE: Style = Style::new().bold().fg_color(Some(Ansi(AnsiColor::Green)));
+const PLACEHOLDER_STYLE: Style = Style::new().fg_color(Some(Ansi(AnsiColor::Cyan)));
+
+const STYLES: Styles = Styles::styled()
+    .literal(AnsiColor::BrightCyan.on_default().bold())
+    .header(HEADER_STYLE)
+    .usage(HEADER_STYLE)
+    .placeholder(PLACEHOLDER_STYLE);
 
 #[derive(Completer, Helper, Hinter, Validator)]
 struct HighlightPrompt {
@@ -133,6 +133,7 @@ async fn write_cmd(connection: &mut TcpStream, command: &str) -> anyhow::Result<
 async fn run(hostname: &str, port: u16, command: Option<&String>) -> GenericResult {
     let mut connection: TcpStream = TcpStream::connect((hostname, port)).await?;
 
+    // If a command was passed in from the -c option, process it and exit.
     if let Some(cmd) = command {
         for line in cmd.lines() {
             let response = write_cmd(&mut connection, &line).await?;
@@ -145,6 +146,7 @@ async fn run(hostname: &str, port: u16, command: Option<&String>) -> GenericResu
         return Ok(());
     }
 
+    // Set up the prompt styling.
     let default_prompt = format!("{}> ", hostname);
     let helper = HighlightPrompt {
         colored_prompt: format!("{}> ", hostname.green()),
@@ -172,8 +174,6 @@ async fn run(hostname: &str, port: u16, command: Option<&String>) -> GenericResu
             println!("{}", resp);
         };
     }
-
-    return Ok(());
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -187,6 +187,7 @@ async fn main() -> GenericResult {
         args.command = lines.join("\n").into();
     }
 
+    // Release mode needs special error handling to not print backtraces for minor errors.
     #[cfg(not(debug_assertions))]
     {
         let res = crate::run(&args.hostname, args.port, args.command.as_ref()).await;
@@ -198,9 +199,10 @@ async fn main() -> GenericResult {
         }
     }
 
+    // Debug mode will pass errors straight to the return so we get a full backtrace.
     #[cfg(debug_assertions)]
     {
-        run(&args.hostname, args.port, args.command.as_ref()).await?;
+        run(&args.host, args.port, args.command.as_ref()).await?;
     }
 
     return Ok(());
