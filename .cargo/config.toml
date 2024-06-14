@@ -1,0 +1,2 @@
+[env]
+RUSTFLAGS="-Zlocation-detail=none"
