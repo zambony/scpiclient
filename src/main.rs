@@ -1,5 +1,5 @@
-use std::borrow::Cow::{self, Borrowed};
 use std::{
+    borrow::Cow::{self, Borrowed},
     io::{self, prelude::*},
     net::ToSocketAddrs,
     process::exit,
@@ -14,9 +14,15 @@ use clap::{
 };
 use dns_lookup::lookup_addr;
 use owo_colors::OwoColorize;
-use rustyline::{config::Configurer, highlight::Highlighter, Completer, Helper, Hinter, Validator};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use rustyline::{
+    config::Configurer,
+    highlight::Highlighter,
+    Completer, Helper, Hinter, Validator
+};
+use tokio::{
+    io::{AsyncRead, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    net::TcpStream
+};
 
 #[cfg(not(debug_assertions))]
 use regex::Regex;
@@ -44,6 +50,10 @@ struct Args {
     /// The port to use.
     #[arg(default_value = "9001")]
     port: u16,
+
+    /// Number of seconds to wait for a query response.
+    #[arg(short, default_value = "5")]
+    timeout: u64,
 
     /// A command/query to run and immediately exit.
     #[arg(short)]
@@ -92,18 +102,21 @@ fn is_query(command: &str) -> bool {
 }
 
 
-/// Reads from the given [`TcpStream`] until a newline is hit and returns the response, if any.
+/// Reads from the given stream until a newline is hit and returns the response, if any.
 /// Has a 5 second timeout to prevent hanging.
 ///
 /// # Arguments
 ///
-/// * `connection`: The [`TcpStream`] to use
+/// * `connection`: The stream to use.
+/// * `timeout`: The time to wait before considering a response failed.
 ///
 /// # Returns
 /// An [`anyhow::Result<String>`] containing the read data.
-async fn read_until_terminator(connection: &mut TcpStream) -> anyhow::Result<String> {
+async fn read_until_terminator<T>(connection: &mut T, timeout: u64) -> anyhow::Result<String>
+    where T: AsyncRead + Unpin
+{
     let mut buffer = String::new();
-    let timeout_length = Duration::from_secs(5);
+    let timeout_length = Duration::from_secs(timeout);
     let mut reader = BufReader::new(connection);
 
     tokio::time::timeout(timeout_length, reader.read_line(&mut buffer))
@@ -123,8 +136,10 @@ fn get_host(destination: &str) -> anyhow::Result<String> {
     return Ok(hostname);
 }
 
-/// Sends `command` to the supplied [`TcpStream`] and returns the query result, if any.
-async fn write_cmd(connection: &mut TcpStream, command: &str) -> anyhow::Result<Option<String>> {
+/// Sends `command` to the supplied buffer and returns the query result, if any.
+async fn write_cmd<T>(connection: &mut T, command: &str, timeout: u64) -> anyhow::Result<Option<String>>
+    where T: AsyncWriteExt + AsyncRead + Unpin
+{
     let is_query_cmd = is_query(command);
     let mut cmd_copy = command.to_owned();
 
@@ -135,7 +150,7 @@ async fn write_cmd(connection: &mut TcpStream, command: &str) -> anyhow::Result<
     connection.write_all(cmd_copy.as_bytes()).await?;
 
     if is_query_cmd {
-        let response = read_until_terminator(connection).await;
+        let response = read_until_terminator(connection, timeout).await;
 
         return match response {
             Ok(ref text) => Ok(Some(text.trim().to_owned())),
@@ -149,13 +164,13 @@ async fn write_cmd(connection: &mut TcpStream, command: &str) -> anyhow::Result<
     return Ok(None);
 }
 
-async fn run(hostname: &str, port: u16, command: Option<&String>) -> GenericResult {
+async fn run(hostname: &str, port: u16, command: Option<&String>, timeout: u64) -> GenericResult {
     let mut connection: TcpStream = TcpStream::connect((hostname, port)).await?;
 
     // If a command was passed in from the -c option, process it and exit.
     if let Some(cmd) = command {
         for line in cmd.lines() {
-            let response = write_cmd(&mut connection, &line).await?;
+            let response = write_cmd(&mut connection, &line, timeout).await?;
 
             if let Some(resp) = response {
                 println!("{}", resp);
@@ -187,7 +202,7 @@ async fn run(hostname: &str, port: u16, command: Option<&String>) -> GenericResu
 
         rl.add_history_entry(&input)?;
 
-        let response = write_cmd(&mut connection, &input).await?;
+        let response = write_cmd(&mut connection, &input, timeout).await?;
 
         if let Some(resp) = response {
             println!("{}", resp);
@@ -209,7 +224,7 @@ async fn main() -> GenericResult {
     // Release mode needs special error handling to not print backtraces for minor errors.
     #[cfg(not(debug_assertions))]
     {
-        let res = crate::run(&args.host, args.port, args.command.as_ref()).await;
+        let res = crate::run(&args.host, args.port, args.command.as_ref(), args.timeout).await;
 
         if let Err(ref inner) = res {
             let error_strip: Regex = Regex::new(r"\s*\(os error \d+\)").unwrap();
@@ -221,7 +236,7 @@ async fn main() -> GenericResult {
     // Debug mode will pass errors straight to the return so we get a full backtrace.
     #[cfg(debug_assertions)]
     {
-        run(&args.host, args.port, args.command.as_ref()).await?;
+        run(&args.host, args.port, args.command.as_ref(), args.timeout).await?;
     }
 
     return Ok(());
@@ -230,6 +245,7 @@ async fn main() -> GenericResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio_test::io::Builder;
 
     #[test]
     fn query_format() {
@@ -244,5 +260,19 @@ mod tests {
         assert!(!is_query("*SAV\n"));
         assert!(!is_query("HELLO:WORLD \"GOODBYE\""));
         assert!(!is_query("HELLO:WORLD \"GOODBYE\"\n"));
+    }
+
+    #[tokio::test]
+    async fn response() {
+        let mut mock_stream = Builder::new()
+            .write(b"QUERY?\n")
+            .read(b"123\n").build();
+
+        let response = write_cmd(&mut mock_stream, "QUERY?", 5)
+            .await
+            .expect("Failed to write test query")
+            .expect("Did not get test query response");
+
+        assert_eq!(response, "123");
     }
 }

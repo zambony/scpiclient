@@ -13,6 +13,9 @@ owo-colors = { version = "4.0.0", features = ["supports-colors"] }
 atty = "0.2.14"
 rustyline = { version = "14.0.0", features = ["derive"] }
 
+[dev-dependencies]
+tokio-test = "0.4.4"
+
 [profile.release]
 lto = true
 codegen-units = 1
