@@ -22,9 +22,6 @@ use tokio::{
     net::TcpStream
 };
 
-#[cfg(not(debug_assertions))]
-use regex::Regex;
-
 type GenericResult = anyhow::Result<()>;
 
 const HEADER_STYLE: Style = Style::new().bold().fg_color(Some(Ansi(AnsiColor::Green)));
@@ -214,8 +211,7 @@ async fn main() -> GenericResult {
         let res = crate::run(&args.host, args.port, args.command.as_ref(), args.timeout).await;
 
         if let Err(ref inner) = res {
-            let error_strip: Regex = Regex::new(r"\s*\(os error \d+\)").unwrap();
-            eprintln!("ERROR: {}", error_strip.replace(&inner.to_string(), ""));
+            eprintln!("ERROR: {}", inner.to_string());
             exit(1);
         }
     }
