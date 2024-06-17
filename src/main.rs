@@ -71,8 +71,11 @@ impl Highlighter for HighlightPrompt {
 
 /// Determine if a command string is a query or not.
 /// # Arguments
-/// * `command` - The command string to check.
+///
+/// * `command`: The command string to check.
+///
 /// # Returns
+///
 /// True if the string contains a query command at the beginning, false if not.
 fn is_query(command: &str) -> bool {
     if command.is_empty() {
@@ -88,8 +91,16 @@ fn is_query(command: &str) -> bool {
         .ends_with("?");
 }
 
+
 /// Reads from the given [`TcpStream`] until a newline is hit and returns the response, if any.
 /// Has a 5 second timeout to prevent hanging.
+///
+/// # Arguments
+///
+/// * `connection`: The [`TcpStream`] to use
+///
+/// # Returns
+/// An [`anyhow::Result<String>`] containing the read data.
 async fn read_until_terminator(connection: &mut TcpStream) -> anyhow::Result<String> {
     let mut buffer = String::new();
     let timeout_length = Duration::from_secs(5);
