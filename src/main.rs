@@ -23,6 +23,15 @@ use regex::Regex;
 
 type GenericResult = anyhow::Result<()>;
 
+const HEADER_STYLE: Style = Style::new().bold().fg_color(Some(Ansi(AnsiColor::Green)));
+const PLACEHOLDER_STYLE: Style = Style::new().fg_color(Some(Ansi(AnsiColor::Cyan)));
+
+const STYLES: Styles = Styles::styled()
+    .literal(AnsiColor::BrightCyan.on_default().bold())
+    .header(HEADER_STYLE)
+    .usage(HEADER_STYLE)
+    .placeholder(PLACEHOLDER_STYLE);
+
 /// A lightweight interactive SCPI client that handles basic commands and queries.
 /// Also accepts piped input or input redirected from a file (one command per line).
 #[derive(Parser, Debug)]
@@ -40,15 +49,6 @@ struct Args {
     #[arg(short)]
     command: Option<String>,
 }
-
-const HEADER_STYLE: Style = Style::new().bold().fg_color(Some(Ansi(AnsiColor::Green)));
-const PLACEHOLDER_STYLE: Style = Style::new().fg_color(Some(Ansi(AnsiColor::Cyan)));
-
-const STYLES: Styles = Styles::styled()
-    .literal(AnsiColor::BrightCyan.on_default().bold())
-    .header(HEADER_STYLE)
-    .usage(HEADER_STYLE)
-    .placeholder(PLACEHOLDER_STYLE);
 
 #[derive(Completer, Helper, Hinter, Validator)]
 struct HighlightPrompt {
