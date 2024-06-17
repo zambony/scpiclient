@@ -55,7 +55,7 @@ struct Args {
 
     /// A command/query to run and immediately exit.
     #[arg(short)]
-    command: Option<String>,
+    command: Option<String>
 }
 
 #[derive(Completer, Helper, Hinter, Validator)]

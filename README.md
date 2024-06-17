@@ -6,8 +6,7 @@ You could use NI-MAX, but then you have to install a ton of stuff.
 You could make a Python script, but then you need to make a Python script.
 
 A quick command-line tool that you know is dedicated for this purpose just feels nicer to me, personally, and I plan to add
-more helpful features as I need them. An important feature for me was being able to pipe in a file of SCPI commands to run to easily replicate
-customer errors.
+more helpful features as I need them. An important feature for me was being able to pipe in a file of SCPI commands.
 
 Also, as this is statically-compiled and produces a small binary, it can be easily put on a USB drive and transferred to
 a computer that needs a way to quickly run SCPI commands.
