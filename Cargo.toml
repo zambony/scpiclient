@@ -8,7 +8,6 @@ tokio = { version = "1.38.0", features = ["full"] }
 regex = { version = "1.10.5" }
 clap = { version = "4.5.7", features = ["derive"] }
 anyhow = "1.0.86"
-dns-lookup = "2.0.4"
 owo-colors = { version = "4.0.0", features = ["supports-colors"] }
 atty = "0.2.14"
 rustyline = { version = "14.0.0", features = ["derive"] }

@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow::{self, Borrowed},
-    io::{self, prelude::*},
-    net::ToSocketAddrs,
+    io,
     process::exit,
     time::Duration,
 };
@@ -12,7 +11,6 @@ use clap::{
     builder::styling::{AnsiColor, Color::Ansi, Style, Styles},
     Parser,
 };
-use dns_lookup::lookup_addr;
 use owo_colors::OwoColorize;
 use rustyline::{
     config::Configurer,
@@ -103,7 +101,6 @@ fn is_query(command: &str) -> bool {
 
 
 /// Reads from the given stream until a newline is hit and returns the response, if any.
-/// Has a 5 second timeout to prevent hanging.
 ///
 /// # Arguments
 ///
@@ -124,16 +121,6 @@ async fn read_until_terminator<T>(connection: &mut T, timeout: u64) -> anyhow::R
         .context("Timed out waiting for query response")??;
 
     return Ok(buffer);
-}
-
-fn get_host(destination: &str) -> anyhow::Result<String> {
-    let mut iter = format!("{}:0", destination)
-        .to_socket_addrs()
-        .context("Failed to parse host for hostname lookup")?;
-    let hostname =
-        lookup_addr(&iter.next().unwrap().ip()).context("Failed to lookup hostname of address")?;
-
-    return Ok(hostname);
 }
 
 /// Sends `command` to the supplied buffer and returns the query result, if any.
