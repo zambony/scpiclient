@@ -1,10 +1,3 @@
-use std::{
-    borrow::Cow::{self, Borrowed},
-    io,
-    process::exit,
-    time::Duration,
-};
-
 use anyhow::Context;
 use atty::Stream::Stdin;
 use clap::{
@@ -12,14 +5,22 @@ use clap::{
     Parser,
 };
 use owo_colors::OwoColorize;
-use rustyline::{
-    config::Configurer,
-    highlight::Highlighter,
-    Completer, Helper, Hinter, Validator
+use rustyline::{config::Configurer, highlight::Highlighter, Completer, Helper, Hinter, Validator};
+use std::future::poll_fn;
+use std::ops::DerefMut;
+use std::task::Poll;
+use std::{
+    borrow::Cow::{self, Borrowed},
+    io,
+    process::exit,
+    sync::Arc,
+    time::Duration,
 };
+use tokio::io::ReadBuf;
 use tokio::{
-    io::{AsyncRead, AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+    net::TcpStream,
+    sync::RwLock,
 };
 
 type GenericResult = anyhow::Result<()>;
@@ -52,7 +53,7 @@ struct Args {
 
     /// A command/query to run and immediately exit.
     #[arg(short)]
-    command: Option<String>
+    command: Option<String>,
 }
 
 #[derive(Completer, Helper, Hinter, Validator)]
@@ -96,7 +97,6 @@ fn is_query(command: &str) -> bool {
         .ends_with("?");
 }
 
-
 /// Reads from the given stream until a newline is hit and returns the response, if any.
 ///
 /// # Arguments
@@ -107,7 +107,8 @@ fn is_query(command: &str) -> bool {
 /// # Returns
 /// An [`anyhow::Result<String>`] containing the read data.
 async fn read_until_terminator<T>(connection: &mut T, timeout: u64) -> anyhow::Result<String>
-    where T: AsyncRead + Unpin
+where
+    T: AsyncRead + Unpin,
 {
     let mut buffer = String::new();
     let timeout_length = Duration::from_secs(timeout);
@@ -121,8 +122,13 @@ async fn read_until_terminator<T>(connection: &mut T, timeout: u64) -> anyhow::R
 }
 
 /// Sends `command` to the supplied buffer and returns the query result, if any.
-async fn write_cmd<T>(connection: &mut T, command: &str, timeout: u64) -> anyhow::Result<Option<String>>
-    where T: AsyncWriteExt + AsyncRead + Unpin
+async fn write_cmd<T>(
+    connection: &mut T,
+    command: &str,
+    timeout: u64,
+) -> anyhow::Result<Option<String>>
+where
+    T: AsyncWrite + AsyncRead + Unpin,
 {
     let is_query_cmd = is_query(command);
     let mut cmd_copy = command.to_owned();
@@ -137,7 +143,7 @@ async fn write_cmd<T>(connection: &mut T, command: &str, timeout: u64) -> anyhow
         let response = read_until_terminator(connection, timeout).await;
 
         return match response {
-            Ok(ref text) => Ok(Some(text.trim().to_owned())),
+            Ok(text) => Ok(Some(text.trim().to_owned())),
             Err(err) => {
                 eprintln!("{}", err);
                 Ok(None)
@@ -148,13 +154,73 @@ async fn write_cmd<T>(connection: &mut T, command: &str, timeout: u64) -> anyhow
     return Ok(None);
 }
 
-async fn run(hostname: &str, port: u16, command: Option<&String>, timeout: u64) -> GenericResult {
-    let mut connection: TcpStream = TcpStream::connect((hostname, port)).await?;
+fn start_heartbeat(connection: Arc<RwLock<TcpStream>>, interval: Duration) {
+    tokio::spawn(async move {
+        let mut buf = [0u8; 1];
+        let mut rb = ReadBuf::new(&mut buf);
+
+        loop {
+            // Inner scope to unlock the stream before sleeping.
+            {
+                let conn = connection.read().await;
+
+                let mut pending = true;
+
+                let size = poll_fn(|cx| {
+                    let status = conn.poll_peek(cx, &mut rb);
+
+                    pending = status.is_pending();
+
+                    // Lie to the poll function so it doesn't block us.
+                    if pending {
+                        return Poll::Ready(Ok(1));
+                    }
+
+                    return status;
+                })
+                    .await;
+
+                // If we were ready and saw a 0 byte read, connection closed or socket keepalive failed.
+                if size.unwrap_or(1) == 0 {
+                    println!("\nConnection lost.");
+                    exit(0);
+                }
+            }
+
+            // Only poll every 5 seconds to avoid extra work.
+            tokio::time::sleep(interval).await;
+        }
+    });
+}
+
+async fn run(hostname: &str, port: u16, command: Option<&str>, timeout: u64) -> GenericResult {
+    let connection: TcpStream = TcpStream::connect((hostname, port)).await?;
+
+    // Ugly hack to set the keepalive property of the tokio TcpStream.
+    let connection = connection.into_std()?;
+    connection.set_nonblocking(false)?;
+    let socket = socket2::Socket::from(connection);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(4))
+        .with_interval(Duration::from_secs(1))
+        .with_retries(4);
+    socket.set_tcp_keepalive(&keepalive)?;
+    let connection: std::net::TcpStream = socket.into();
+
+    // Turn the std connection back into a tokio stream now that keepalive is enabled.
+    let connection = TcpStream::from_std(connection)?;
+
+    let mut wrapped = Arc::new(RwLock::new(connection));
 
     // If a command was passed in from the -c option, process it and exit.
     if let Some(cmd) = command {
         for line in cmd.lines() {
-            let response = write_cmd(&mut connection, &line, timeout).await?;
+            let response = write_cmd(
+                Arc::get_mut(&mut wrapped).unwrap().get_mut(),
+                &line,
+                timeout,
+            )
+            .await?;
 
             if let Some(resp) = response {
                 println!("{}", resp);
@@ -173,6 +239,10 @@ async fn run(hostname: &str, port: u16, command: Option<&String>, timeout: u64) 
     rl.set_history_ignore_space(true);
     rl.set_helper(Some(helper));
 
+    // Spawn a separate task that will poll the stream for whether it's closed.
+    // Do this since the main task is stuck waiting for a readline.
+    start_heartbeat(wrapped.clone(), Duration::from_secs(5));
+
     // Enter the input loop.
     loop {
         let read = rl.readline(&default_prompt);
@@ -186,7 +256,7 @@ async fn run(hostname: &str, port: u16, command: Option<&String>, timeout: u64) 
 
         rl.add_history_entry(&input)?;
 
-        let response = write_cmd(&mut connection, &input, timeout).await?;
+        let response = write_cmd(wrapped.write().await.deref_mut(), &input, timeout).await?;
 
         if let Some(resp) = response {
             println!("{}", resp);
@@ -194,7 +264,7 @@ async fn run(hostname: &str, port: u16, command: Option<&String>, timeout: u64) 
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> GenericResult {
     let mut args = Args::parse();
 
@@ -219,7 +289,7 @@ async fn main() -> GenericResult {
     // Debug mode will pass errors straight to the return so we get a full backtrace.
     #[cfg(debug_assertions)]
     {
-        run(&args.host, args.port, args.command.as_ref(), args.timeout).await?;
+        run(&args.host, args.port, args.command.as_deref(), args.timeout).await?;
     }
 
     return Ok(());
@@ -247,9 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn response() {
-        let mut mock_stream = Builder::new()
-            .write(b"QUERY?\n")
-            .read(b"123\n").build();
+        let mut mock_stream = Builder::new().write(b"QUERY?\n").read(b"123\n").build();
 
         let response = write_cmd(&mut mock_stream, "QUERY?", 5)
             .await
