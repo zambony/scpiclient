@@ -283,7 +283,7 @@ async fn main() -> GenericResult {
     // Release mode needs special error handling to not print backtraces for minor errors.
     #[cfg(not(debug_assertions))]
     {
-        let res = crate::run(&args.host, args.port, args.command.as_ref(), args.timeout).await;
+        let res = crate::run(&args.host, args.port, args.command.as_deref(), args.timeout).await;
 
         if let Err(ref inner) = res {
             eprintln!("ERROR: {}", inner.to_string());
