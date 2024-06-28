@@ -16,6 +16,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use std::io::Error;
 use tokio::io::ReadBuf;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
@@ -154,6 +155,24 @@ where
     return Ok(None);
 }
 
+async fn try_peek(stream: &TcpStream, buf: &mut ReadBuf<'_>) -> Result<usize, Error> {
+    let mut pending = true;
+
+    return poll_fn(|cx| {
+        let status = stream.poll_peek(cx, buf);
+
+        pending = status.is_pending();
+
+        // Lie to the poll function so it doesn't block.
+        if pending {
+            return Poll::Ready(Ok(1));
+        }
+
+        return status;
+    })
+    .await;
+}
+
 fn start_heartbeat(connection: Arc<RwLock<TcpStream>>, interval: Duration) {
     tokio::spawn(async move {
         let mut buf = [0u8; 1];
@@ -164,21 +183,7 @@ fn start_heartbeat(connection: Arc<RwLock<TcpStream>>, interval: Duration) {
             {
                 let conn = connection.read().await;
 
-                let mut pending = true;
-
-                let size = poll_fn(|cx| {
-                    let status = conn.poll_peek(cx, &mut rb);
-
-                    pending = status.is_pending();
-
-                    // Lie to the poll function so it doesn't block us.
-                    if pending {
-                        return Poll::Ready(Ok(1));
-                    }
-
-                    return status;
-                })
-                    .await;
+                let size = try_peek(&conn, &mut rb).await;
 
                 // If we were ready and saw a 0 byte read, connection closed or socket keepalive failed.
                 if size.unwrap_or(1) == 0 {
