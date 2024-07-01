@@ -188,7 +188,8 @@ fn start_heartbeat(connection: Arc<RwLock<TcpStream>>, interval: Duration) {
                 // If we were ready and saw a 0 byte read, connection closed or socket keepalive failed.
                 if size.unwrap_or(1) == 0 {
                     println!("\nConnection lost.");
-                    exit(0);
+                    crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                    exit(1);
                 }
             }
 

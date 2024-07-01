@@ -11,6 +11,7 @@ owo-colors = { version = "4.0.0", features = ["supports-colors"] }
 atty = "0.2.14"
 rustyline = { version = "14.0.0", features = ["derive"] }
 socket2 = "0.5.7"
+crossterm = "0.27.0"
 
 [dev-dependencies]
 tokio-test = "0.4.4"
