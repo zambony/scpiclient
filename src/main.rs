@@ -208,8 +208,11 @@ async fn run(hostname: &str, port: u16, command: Option<&str>, timeout: u64) -> 
     let socket = socket2::Socket::from(connection);
     let keepalive = socket2::TcpKeepalive::new()
         .with_time(Duration::from_secs(4))
-        .with_interval(Duration::from_secs(1))
-        .with_retries(4);
+        .with_interval(Duration::from_secs(1));
+    
+    #[cfg(!windows)]
+    let keepalive = keepalive.with_retries(4);
+
     socket.set_tcp_keepalive(&keepalive)?;
     let connection: std::net::TcpStream = socket.into();
 
