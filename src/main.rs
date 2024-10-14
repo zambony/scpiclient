@@ -1,5 +1,4 @@
 use anyhow::Context;
-use atty::Stream::Stdin;
 use clap::{
     builder::styling::{AnsiColor, Color::Ansi, Style, Styles},
     Parser,
@@ -16,7 +15,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use std::io::Error;
+use std::io::{Error, IsTerminal};
 use tokio::io::ReadBuf;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
@@ -132,7 +131,7 @@ where
     T: AsyncWrite + AsyncRead + Unpin,
 {
     let is_query_cmd = is_query(command);
-    let mut cmd_copy = command.to_owned();
+    let mut cmd_copy = command.to_owned().trim();
 
     if !cmd_copy.ends_with('\n') {
         cmd_copy.push('\n');
@@ -250,6 +249,7 @@ async fn run(hostname: &str, port: u16, command: Option<&str>, timeout: u64) -> 
 
     // Spawn a separate task that will poll the stream for whether it's closed.
     // Do this since the main task is stuck waiting for a readline.
+    #[cfg(not(windows))]
     start_heartbeat(wrapped.clone(), Duration::from_secs(5));
 
     // Enter the input loop.
@@ -278,7 +278,7 @@ async fn main() -> GenericResult {
     let mut args = Args::parse();
 
     // We're receiving piped or redirected data.
-    if !atty::is(Stdin) {
+    if !io::stdin().is_terminal() {
         let lines: Vec<String> = io::stdin().lines().map(|x| x.unwrap()).collect();
 
         args.command = lines.join("\n").into();
