@@ -131,7 +131,7 @@ where
     T: AsyncWrite + AsyncRead + Unpin,
 {
     let is_query_cmd = is_query(command);
-    let mut cmd_copy = command.to_owned().trim();
+    let mut cmd_copy = command.trim().to_owned();
 
     if !cmd_copy.ends_with('\n') {
         cmd_copy.push('\n');
