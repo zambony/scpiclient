@@ -16,12 +16,13 @@ use std::{
     time::Duration,
 };
 use std::io::{Error, IsTerminal};
-use tokio::io::ReadBuf;
+use tokio::io::{Interest, ReadBuf};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     net::TcpStream,
     sync::RwLock,
 };
+use tokio::time::timeout;
 
 type GenericResult = anyhow::Result<()>;
 
@@ -154,46 +155,24 @@ where
     return Ok(None);
 }
 
-async fn try_peek(stream: &TcpStream, buf: &mut ReadBuf<'_>) -> Result<usize, Error> {
-    let mut pending = true;
-
-    return poll_fn(|cx| {
-        let status = stream.poll_peek(cx, buf);
-
-        pending = status.is_pending();
-
-        // Lie to the poll function so it doesn't block.
-        if pending {
-            return Poll::Ready(Ok(1));
-        }
-
-        return status;
-    })
-    .await;
-}
-
 fn start_heartbeat(connection: Arc<RwLock<TcpStream>>, interval: Duration) {
     tokio::spawn(async move {
-        let mut buf = [0u8; 1];
-        let mut rb = ReadBuf::new(&mut buf);
-
         loop {
-            // Inner scope to unlock the stream before sleeping.
-            {
-                let conn = connection.read().await;
-
-                let size = try_peek(&conn, &mut rb).await;
-
-                // If we were ready and saw a 0 byte read, connection closed or socket keepalive failed.
-                if size.unwrap_or(1) == 0 {
-                    println!("\nConnection lost.");
-                    crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
-                    exit(1);
-                }
-            }
-
             // Only poll every 5 seconds to avoid extra work.
             tokio::time::sleep(interval).await;
+
+            {
+                let conn = connection.read().await;
+                let ready = timeout(Duration::from_millis(10), conn.ready(Interest::READABLE)).await;
+
+                if let Ok(ready_result) = ready {
+                    if ready_result.is_ok_and(|r| r.is_read_closed() ) {
+                        println!("\nConnection lost.");
+                        crossterm::terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        exit(1);
+                    }
+                }
+            }
         }
     });
 }
@@ -249,7 +228,6 @@ async fn run(hostname: &str, port: u16, command: Option<&str>, timeout: u64) -> 
 
     // Spawn a separate task that will poll the stream for whether it's closed.
     // Do this since the main task is stuck waiting for a readline.
-    #[cfg(not(windows))]
     start_heartbeat(wrapped.clone(), Duration::from_secs(5));
 
     // Enter the input loop.
@@ -261,7 +239,7 @@ async fn run(hostname: &str, port: u16, command: Option<&str>, timeout: u64) -> 
             exit(0);
         }
 
-        let input = read.unwrap();
+        let input = read?;
 
         rl.add_history_entry(&input)?;
 
